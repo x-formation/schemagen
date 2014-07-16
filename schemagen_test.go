@@ -27,62 +27,59 @@ const (
 	JSONTest     = `{"type": "object","properties": { %s "id": {"$ref": "#/definitions/id"}}}`
 )
 
-func (s *schemaGenSuite) SetUpTest(c *C) {
-	services = make(map[string]string)
-	mergeSchemas = false
-	definitions = nil
-}
-
 func (s *schemaGenSuite) TestLoadDefinitions(c *C) {
+	schg := New(false)
 	// no definitions.json file.
 	noDefPath, err := ioutil.TempDir(os.TempDir(), "schemafail")
 	c.Assert(err, IsNil)
 
 	tests := []string{
 		noDefPath,
-		newSchemaJsonDir(c, "/*Invalid schema{", " "),
-		newSchemaJsonDir(c, fmt.Sprintf(defJSONTest, `"id": 32`), " "),
+		newSchemaJSONDir(c, "/*Invalid schema{", " "),
+		newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, `"id": 32`), " "),
 	}
 	for _, path := range tests {
-		err = loadDefinitions(path)
+		err = schg.loadDefinitions(path)
 		c.Assert(err, NotNil)
-		c.Assert(definitions, IsNil)
+		c.Assert(schg.definitions, IsNil)
 	}
 
 	// valid definitions.json schema.
-	path := newSchemaJsonDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
-	err = loadDefinitions(path)
+	path := newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
+	err = schg.loadDefinitions(path)
 	c.Assert(err, IsNil)
-	c.Assert(definitions, NotNil)
+	c.Assert(schg.definitions, NotNil)
 }
 
 func (s *schemaGenSuite) TestFindReferences(c *C) {
-	refs := findReferencesTest(c, fmt.Sprintf(JSONTest, ""))
+	schg := New(false)
+	refs := findReferencesTest(c, fmt.Sprintf(JSONTest, ""), schg)
 	c.Assert(refs, HasLen, 1)
 	c.Check(refs[0], Equals, "id")
 
-	refs = findReferencesTest(c, `{ "id": 54 }`)
+	refs = findReferencesTest(c, `{ "id": 54 }`, schg)
 	c.Assert(refs, HasLen, 0)
 }
 
 func (s *schemaGenSuite) TestMakeDefinitions(c *C) {
+	schg := New(false)
 	// nil definitions.
-	c.Assert(definitions, IsNil)
-	defsmap, err := makeDefinitions([]string{"id"})
+	c.Assert(schg.definitions, IsNil)
+	defsmap, err := schg.makeDefinitions([]string{"id"})
 	c.Assert(err, NotNil)
 	// empty definitions non empty refs.
-	definitions = make(map[string]interface{})
-	c.Assert(definitions, NotNil)
-	defsmap, err = makeDefinitions([]string{"id"})
+	schg.definitions = make(map[string]interface{})
+	c.Assert(schg.definitions, NotNil)
+	defsmap, err = schg.makeDefinitions([]string{"id"})
 	c.Assert(err, NotNil)
 
 	// should extract id definition.
-	definitions = nil
-	path := newSchemaJsonDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
-	err = loadDefinitions(path)
+	schg.definitions = nil
+	path := newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
+	err = schg.loadDefinitions(path)
 	c.Assert(err, IsNil)
-	c.Assert(definitions, NotNil)
-	defsmap, err = makeDefinitions([]string{"id"})
+	c.Assert(schg.definitions, NotNil)
+	defsmap, err = schg.makeDefinitions([]string{"id"})
 	c.Assert(err, IsNil)
 	_, ok := defsmap["id"]
 	c.Check(ok, Equals, true)
@@ -95,36 +92,38 @@ func (s *schemaGenSuite) TestDumpToTmpDirs(c *C) {
 		filepath.Join("service3", "method100"): "service3",
 		filepath.Join("service4", "method200"): "service4",
 	}
+	schg := New(false)
 
-	mergeSchemas = false
 	for path, serv := range testPaths {
-		err := dumpToTmpDirs(path, []byte("sth"))
+		err := schg.dumpToTmpDirs(path, []byte("sth"))
 		c.Assert(err, IsNil)
-		_, ok := services[serv]
+		_, ok := schg.services[serv]
 		c.Check(ok, Equals, true)
 	}
 
-	mergeSchemas = true
-	services = make(map[string]string)
+	schg.merge = true
+	schg.services = make(map[string]string)
 	for path, serv := range testPaths {
-		err := dumpToTmpDirs(path, []byte("sth"))
+		err := schg.dumpToTmpDirs(path, []byte("sth"))
 		c.Assert(err, IsNil)
-		_, ok := services[serv]
+		_, ok := schg.services[serv]
 		c.Check(ok, Equals, false)
 	}
-	_, ok := services["schema"]
+	_, ok := schg.services["schema"]
 	c.Check(ok, Equals, true)
 }
 
 func (s *schemaGenSuite) TestSaveAsGoBinData(c *C) {
-	services["testservice"] = filepath.Join(
-		newSchemaJsonDir(c, "def", "\x44\x55\x50\x41"), "testservice")
+	schg := New(false)
+
+	schg.services["testservice"] = filepath.Join(
+		newSchemaJSONDir(c, "def", "\x44\x55\x50\x41"), "testservice")
 	out, err := ioutil.TempDir(os.TempDir(), "out")
 	c.Assert(err, IsNil)
 	err = os.Mkdir(filepath.Join(out, "testservice"), 0755)
 	c.Assert(err, IsNil)
 
-	err = saveAsGoBinData(out)
+	err = schg.saveAsGoBinData(out)
 	c.Assert(err, IsNil)
 	f, err := os.Open(filepath.Join(out, "testservice", "schema.go"))
 	c.Assert(err, IsNil)
@@ -146,26 +145,29 @@ func (s *schemaGenSuite) TestSaveAsGoBinData(c *C) {
 }
 
 func (s *schemaGenSuite) TestCreateBindSchemaFiles(c *C) {
-	services["testservice"] = filepath.Join(
-		newSchemaJsonDir(c, "def", "cont"), "testservice")
+	schg := New(false)
+	schg.services["testservice"] = filepath.Join(
+		newSchemaJSONDir(c, "def", "cont"), "testservice")
 	out, err := ioutil.TempDir(os.TempDir(), "out")
 	c.Assert(err, IsNil)
 	err = os.Mkdir(filepath.Join(out, "testservice"), 0755)
 	c.Assert(err, IsNil)
 
-	err = createBindSchemaFiles(out)
+	err = schg.createBindSchemaFiles(out)
 	c.Assert(err, IsNil)
 	f, err := os.Open(filepath.Join(out, "testservice", "bind.go"))
 	c.Assert(err, IsNil)
 	defer f.Close()
 	content, err := ioutil.ReadAll(f)
+	c.Assert(err, IsNil)
 
 	c.Check(strings.Index(string(content), "package testservice"), Not(Equals), -1)
 	c.Check(strings.Index(string(content), "(\"testservice: "), Not(Equals), -1)
 }
 
 func (s *schemaGenSuite) TestGenerateNoMerge(c *C) {
-	inPath := newSchemaJsonDir(c,
+	schg := New(false)
+	inPath := newSchemaJSONDir(c,
 		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""))
 	outPath, err := ioutil.TempDir(os.TempDir(), "out")
 	c.Assert(err, IsNil)
@@ -174,10 +176,9 @@ func (s *schemaGenSuite) TestGenerateNoMerge(c *C) {
 		filepath.Join(outPath, "testservice", "schema.go"): IsNil,
 		filepath.Join(outPath, "testservice", "bind.go"):   IsNil,
 		filepath.Join(outPath, "schema", "schema.go"):      NotNil,
-		filepath.Join(outPath, "schema", "bind.go"):        NotNil,
-	}
+		filepath.Join(outPath, "schema", "bind.go"):        NotNil}
 
-	err = Generate(inPath, outPath)
+	err = schg.Generate(inPath, outPath)
 	c.Assert(err, IsNil)
 	for path, checker := range tests {
 		_, err = os.Stat(path)
@@ -186,7 +187,7 @@ func (s *schemaGenSuite) TestGenerateNoMerge(c *C) {
 }
 
 func (s *schemaGenSuite) TestGenerateMerge(c *C) {
-	inPath := newSchemaJsonDir(c,
+	inPath := newSchemaJSONDir(c,
 		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""))
 	outPath, err := ioutil.TempDir(os.TempDir(), "out")
 	c.Assert(err, IsNil)
@@ -197,12 +198,12 @@ func (s *schemaGenSuite) TestGenerateMerge(c *C) {
 		filepath.Join(outPath, "schema", "schema.go"):      IsNil,
 		filepath.Join(outPath, "schema", "bind.go"):        IsNil,
 	}
+	schg := New(true)
 
-	mergeSchemas = true
-	err = Generate(inPath, outPath)
+	err = schg.Generate(inPath, outPath)
 	c.Assert(err, IsNil)
 
-	err = Generate(inPath, outPath)
+	err = schg.Generate(inPath, outPath)
 	c.Assert(err, IsNil)
 	for path, checker := range tests {
 		_, err = os.Stat(path)
@@ -210,14 +211,14 @@ func (s *schemaGenSuite) TestGenerateMerge(c *C) {
 	}
 }
 
-func findReferencesTest(c *C, schema string) []string {
+func findReferencesTest(c *C, schema string, schg *schg) []string {
 	var mapSchema map[string]interface{}
 	err := json.Unmarshal([]byte(schema), &mapSchema)
 	c.Assert(err, IsNil)
-	return findReferences(mapSchema)
+	return schg.findReferences(mapSchema)
 }
 
-func newSchemaJsonDir(c *C, definitions, method string) (path string) {
+func newSchemaJSONDir(c *C, definitions, method string) (path string) {
 	// write definitions.json file.
 	path, err := ioutil.TempDir(os.TempDir(), "schema")
 	if err != nil {
