@@ -19,10 +19,10 @@ import (
 )
 
 var (
-	merge bool
-	in    string
-	out   string
-	h     bool
+	separate bool
+	in       string
+	out      string
+	h        bool
 )
 
 const usage = `NAME:
@@ -37,7 +37,7 @@ USAGE:
 `
 
 func init() {
-	flag.BoolVar(&merge, "separate", merge, "Generate go schemas per service.")
+	flag.BoolVar(&separate, "separate", separate, "Generate go schemas per service.")
 	flag.StringVar(&in, "input", in, "JSON files input directory.")
 	flag.StringVar(&out, "output", out, "Go source files output directory.")
 	flag.BoolVar(&h, "help", h, "Show this message.")
@@ -58,11 +58,10 @@ func main() {
 		os.Exit(1)
 	}
 	var err error
-	schg := schemagen.New(!merge)
 	if in != "" {
-		err = schg.Generate(in, out)
+		err = schemagen.New(!separate).Generate(in, out)
 	} else {
-		err = schg.Glob()
+		err = schemagen.Glob(!separate)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())

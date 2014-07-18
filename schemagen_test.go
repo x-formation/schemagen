@@ -11,15 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	. "gopkg.in/check.v1"
 )
-
-func Test(t *testing.T) { TestingT(t) }
-
-type schemaGenSuite struct{}
-
-var _ = Suite(&schemaGenSuite{})
 
 const (
 	defJSONTest  = `{"$schema": "http://json-schema.org/draft-04/schema#", %s}`
@@ -27,65 +19,112 @@ const (
 	JSONTest     = `{"type": "object","properties": { %s "id": {"$ref": "#/definitions/id"}}}`
 )
 
-func (s *schemaGenSuite) TestLoadDefinitions(c *C) {
+func TestLoadDefinitions(t *testing.T) {
 	schg := New(false)
 	// no definitions.json file.
 	noDefPath, err := ioutil.TempDir(os.TempDir(), "schemafail")
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %q", err)
+	}
 
 	tests := []string{
 		noDefPath,
-		newSchemaJSONDir(c, "/*Invalid schema{", " "),
-		newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, `"id": 32`), " "),
+		newSchemaJSONDir(t, "/*Invalid schema{", " ", ""),
+		newSchemaJSONDir(t, fmt.Sprintf(defJSONTest, `"id": 32`), " ", ""),
 	}
+	defer func() {
+		for _, p := range tests {
+			os.RemoveAll(p)
+		}
+	}()
 	for _, path := range tests {
 		err = schg.loadDefinitions(path)
-		c.Assert(err, NotNil)
-		c.Assert(schg.definitions, IsNil)
+		if err == nil {
+			t.Fatalf("want err!=nil")
+		}
+
+		if schg.definitions != nil {
+			t.Fatalf("want schg.definitions=nil; got %v", schg.definitions)
+		}
 	}
 
 	// valid definitions.json schema.
-	path := newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
+	path := newSchemaJSONDir(t, fmt.Sprintf(defJSONTest, idDefinition), " ", "")
+	defer os.RemoveAll(path)
 	err = schg.loadDefinitions(path)
-	c.Assert(err, IsNil)
-	c.Assert(schg.definitions, NotNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %q", err)
+	}
+
+	if schg.definitions == nil {
+		t.Errorf("want schg.definitions!=nil")
+	}
 }
 
-func (s *schemaGenSuite) TestFindReferences(c *C) {
+func TestFindReferences(t *testing.T) {
 	schg := New(false)
-	refs := findReferencesTest(c, fmt.Sprintf(JSONTest, ""), schg)
-	c.Assert(refs, HasLen, 1)
-	c.Check(refs[0], Equals, "id")
+	refs := findReferencesTest(t, fmt.Sprintf(JSONTest, ""), schg)
+	if len(refs) != 1 {
+		t.Fatalf("want len(refs)=1; got %d", len(refs))
+	}
+	if refs[0] != "id" {
+		t.Fatalf("want refs[0]=\"id\"; got %s", refs[0])
+	}
 
-	refs = findReferencesTest(c, `{ "id": 54 }`, schg)
-	c.Assert(refs, HasLen, 0)
+	refs = findReferencesTest(t, `{ "id": 54 }`, schg)
+	if len(refs) != 0 {
+		t.Fatalf("want len(refs)=0; got %d", len(refs))
+	}
 }
 
-func (s *schemaGenSuite) TestMakeDefinitions(c *C) {
+func TestMakeDefinitions(t *testing.T) {
 	schg := New(false)
 	// nil definitions.
-	c.Assert(schg.definitions, IsNil)
+	if schg.definitions != nil {
+		t.Fatalf("want schg.definitions=nil")
+	}
+
 	defsmap, err := schg.makeDefinitions([]string{"id"})
-	c.Assert(err, NotNil)
+	if err == nil {
+		t.Fatalf("want err!=nil")
+	}
+
 	// empty definitions non empty refs.
 	schg.definitions = make(map[string]interface{})
-	c.Assert(schg.definitions, NotNil)
+	if schg.definitions == nil {
+		t.Fatalf("want schg.definitions!=nil")
+	}
+
 	defsmap, err = schg.makeDefinitions([]string{"id"})
-	c.Assert(err, NotNil)
+	if err == nil {
+		t.Fatal("want err!=nil")
+	}
 
 	// should extract id definition.
 	schg.definitions = nil
-	path := newSchemaJSONDir(c, fmt.Sprintf(defJSONTest, idDefinition), " ")
+	path := newSchemaJSONDir(t, fmt.Sprintf(defJSONTest, idDefinition), " ", "")
+	defer os.RemoveAll(path)
 	err = schg.loadDefinitions(path)
-	c.Assert(err, IsNil)
-	c.Assert(schg.definitions, NotNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	if schg.definitions == nil {
+		t.Fatalf("want schg.definitions!=nil")
+	}
+
 	defsmap, err = schg.makeDefinitions([]string{"id"})
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
 	_, ok := defsmap["id"]
-	c.Check(ok, Equals, true)
+	if !ok {
+		t.Fatalf("want ok=true")
+	}
 }
 
-func (s *schemaGenSuite) TestDumpToTmpDirs(c *C) {
+func TestDumpToTmpDirs(t *testing.T) {
 	testPaths := map[string]string{
 		filepath.Join("service1", "method1"):   "service1",
 		filepath.Join("service2", "method1"):   "service2",
@@ -93,40 +132,71 @@ func (s *schemaGenSuite) TestDumpToTmpDirs(c *C) {
 		filepath.Join("service4", "method200"): "service4",
 	}
 	schg := New(false)
+	schg.pkg = "serv_dir"
 
 	for path, serv := range testPaths {
 		err := schg.dumpToTmpDirs(path, []byte("sth"))
-		c.Assert(err, IsNil)
+		defer schg.dropTmpDirs()
+
+		if err != nil {
+			t.Fatalf("want err=nil; got %v", err)
+		}
 		_, ok := schg.services[serv]
-		c.Check(ok, Equals, true)
+		if !ok {
+			t.Fatalf("want ok=true")
+		}
 	}
 
 	schg.merge = true
 	schg.services = make(map[string]string)
 	for path, serv := range testPaths {
 		err := schg.dumpToTmpDirs(path, []byte("sth"))
-		c.Assert(err, IsNil)
+		if err != nil {
+			t.Fatalf("want err=nil; got %v", err)
+		}
+
 		_, ok := schg.services[serv]
-		c.Check(ok, Equals, false)
+		if ok {
+			t.Fatalf("want ok=false")
+		}
 	}
-	_, ok := schg.services["schema"]
-	c.Check(ok, Equals, true)
+	_, ok := schg.services["serv_dir"]
+	if !ok {
+		t.Fatalf("want ok=true")
+	}
+	_, ok = schg.services["schema"]
+	if ok {
+		t.Fatalf("want ok=false")
+	}
 }
 
-func (s *schemaGenSuite) TestSaveAsGoBinData(c *C) {
+func TestSaveAsGoBinData(t *testing.T) {
 	schg := New(false)
+	tmpPath := newSchemaJSONDir(t, "def", "\x44\x55\x50\x41", "")
 
-	schg.services["testservice"] = filepath.Join(
-		newSchemaJSONDir(c, "def", "\x44\x55\x50\x41"), "testservice")
+	schg.services["testservice"] = filepath.Join(tmpPath, "testservice")
+	defer os.RemoveAll(tmpPath)
 	out, err := ioutil.TempDir(os.TempDir(), "out")
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+	defer os.RemoveAll(out)
+
 	err = os.Mkdir(filepath.Join(out, "testservice"), 0755)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
 
 	err = schg.saveAsGoBinData(out)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
 	f, err := os.Open(filepath.Join(out, "testservice", "schema.go"))
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
 	defer f.Close()
 	content, err := ioutil.ReadAll(f)
 
@@ -141,111 +211,322 @@ func (s *schemaGenSuite) TestSaveAsGoBinData(c *C) {
 	re := regexp.MustCompile(`0x([a-f0-9]), `)
 	byteSearch = re.ReplaceAllString(byteSearch, `0x0$1, `)
 
-	c.Check(strings.Index(string(content), byteSearch), Not(Equals), -1)
-}
-
-func (s *schemaGenSuite) TestCreateBindSchemaFiles(c *C) {
-	schg := New(false)
-	schg.services["testservice"] = filepath.Join(
-		newSchemaJSONDir(c, "def", "cont"), "testservice")
-	out, err := ioutil.TempDir(os.TempDir(), "out")
-	c.Assert(err, IsNil)
-	err = os.Mkdir(filepath.Join(out, "testservice"), 0755)
-	c.Assert(err, IsNil)
-
-	err = schg.createBindSchemaFiles(out)
-	c.Assert(err, IsNil)
-	f, err := os.Open(filepath.Join(out, "testservice", "bind.go"))
-	c.Assert(err, IsNil)
-	defer f.Close()
-	content, err := ioutil.ReadAll(f)
-	c.Assert(err, IsNil)
-
-	c.Check(strings.Index(string(content), "package testservice"), Not(Equals), -1)
-	c.Check(strings.Index(string(content), "(\"testservice: "), Not(Equals), -1)
-}
-
-func (s *schemaGenSuite) TestGenerateNoMerge(c *C) {
-	schg := New(false)
-	inPath := newSchemaJSONDir(c,
-		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""))
-	outPath, err := ioutil.TempDir(os.TempDir(), "out")
-	c.Assert(err, IsNil)
-
-	tests := map[string]Checker{
-		filepath.Join(outPath, "testservice", "schema.go"): IsNil,
-		filepath.Join(outPath, "testservice", "bind.go"):   IsNil,
-		filepath.Join(outPath, "schema", "schema.go"):      NotNil,
-		filepath.Join(outPath, "schema", "bind.go"):        NotNil}
-
-	err = schg.Generate(inPath, outPath)
-	c.Assert(err, IsNil)
-	for path, checker := range tests {
-		_, err = os.Stat(path)
-		c.Check(err, checker)
+	if strings.Index(string(content), byteSearch) == -1 {
+		t.Errorf("want content (%s) to contain \"%s\"", string(content), byteSearch)
 	}
 }
 
-func (s *schemaGenSuite) TestGenerateMerge(c *C) {
-	inPath := newSchemaJSONDir(c,
-		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""))
-	outPath, err := ioutil.TempDir(os.TempDir(), "out")
-	c.Assert(err, IsNil)
+func TestCreateBindSchemaFiles(t *testing.T) {
+	schg := New(false)
+	tmpPath := newSchemaJSONDir(t, "def", "cont", "")
+	schg.services["testservice"] = filepath.Join(tmpPath, "testservice")
+	defer os.RemoveAll(tmpPath)
+	out, err := ioutil.TempDir(os.TempDir(), "out")
+	defer os.RemoveAll(out)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
 
-	tests := map[string]Checker{
-		filepath.Join(outPath, "testservice", "schema.go"): NotNil,
-		filepath.Join(outPath, "testservice", "bind.go"):   NotNil,
-		filepath.Join(outPath, "schema", "schema.go"):      IsNil,
-		filepath.Join(outPath, "schema", "bind.go"):        IsNil,
+	err = os.Mkdir(filepath.Join(out, "testservice"), 0755)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	err = schg.createBindSchemaFiles(out)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	f, err := os.Open(filepath.Join(out, "testservice", "bind.go"))
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	defer f.Close()
+	content, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	if strings.Index(string(content), "package testservice") == -1 {
+		t.Errorf("want content (%s) to contain \"package testservice\"",
+			string(content))
+	}
+	if strings.Index(string(content), "(\"testservice: ") == -1 {
+		t.Errorf("want content (%s) to contain \"(\"testservice: \"",
+			string(content))
+	}
+}
+
+func TestGenerateNoMerge(t *testing.T) {
+	schg := New(false)
+	inPath := newSchemaJSONDir(t,
+		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""), "")
+	defer os.RemoveAll(inPath)
+	outPath, err := ioutil.TempDir(os.TempDir(), "out")
+	defer os.RemoveAll(outPath)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	tests := map[string]bool{
+		filepath.Join(outPath, "testservice", "schema.go"):         true,
+		filepath.Join(outPath, "testservice", "bind.go"):           true,
+		filepath.Join(outPath, filepath.Dir(outPath), "schema.go"): false,
+		filepath.Join(outPath, filepath.Dir(outPath), "bind.go"):   false}
+
+	err = schg.Generate(inPath, outPath)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	for path, isnil := range tests {
+		_, err = os.Stat(path)
+		if isnil {
+			if err != nil {
+				t.Errorf("want err=nil; got %v (path: %v)", err, path)
+			}
+		} else {
+			if err == nil {
+				t.Errorf("want err!=nil (path: %v)", path)
+			}
+		}
+	}
+}
+
+func TestGenerateMerge(t *testing.T) {
+	inPath := newSchemaJSONDir(t,
+		fmt.Sprintf(defJSONTest, idDefinition), fmt.Sprintf(JSONTest, ""), "")
+	defer os.RemoveAll(inPath)
+	outPath, err := ioutil.TempDir(os.TempDir(), "out")
+	defer os.RemoveAll(outPath)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	tests := map[string]bool{
+		filepath.Join(outPath, "testservice", "schema.go"): false,
+		filepath.Join(outPath, "testservice", "bind.go"):   false,
+		filepath.Join(outPath, "schema.go"):                true,
+		filepath.Join(outPath, "bind.go"):                  true,
 	}
 	schg := New(true)
 
 	err = schg.Generate(inPath, outPath)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
 
 	err = schg.Generate(inPath, outPath)
-	c.Assert(err, IsNil)
-	for path, checker := range tests {
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
+
+	for path, isnil := range tests {
 		_, err = os.Stat(path)
-		c.Check(err, checker)
+		if isnil {
+			if err != nil {
+				t.Errorf("want err=nil; got %v (path: %v)", err, path)
+			}
+		} else {
+			if err == nil {
+				t.Errorf("want err!=nil (path: %v)", path)
+			}
+		}
 	}
 }
 
-func findReferencesTest(c *C, schema string, schg *schg) []string {
+func findReferencesTest(t *testing.T, schema string, schg *schg) []string {
 	var mapSchema map[string]interface{}
 	err := json.Unmarshal([]byte(schema), &mapSchema)
-	c.Assert(err, IsNil)
+	if err != nil {
+		t.Fatalf("want err=nil; got %v", err)
+	}
 	return schg.findReferences(mapSchema)
 }
 
-func newSchemaJSONDir(c *C, definitions, method string) (path string) {
+func newSchemaJSONDir(t *testing.T, definitions, method,
+	subdir string) (path string) {
 	// write definitions.json file.
-	path, err := ioutil.TempDir(os.TempDir(), "schema")
+	path, err := ioutil.TempDir(filepath.Join(os.TempDir(), subdir), "schema")
 	if err != nil {
-		c.Fatal("Cannot create a temporary folder", err)
+		t.Fatalf("Cannot create a temporary folder %v", err)
 	}
 	defFile, err := os.OpenFile(
-		filepath.Join(path, "definitions.json"), os.O_RDWR|os.O_CREATE, 0755)
+		filepath.Join(path, definitionsFile), os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
-		c.Fatalf("Cannot open %s file: %v", defFile.Name(), err)
+		t.Fatalf("Cannot open %s file: %v", defFile.Name(), err)
 	}
 	defer defFile.Close()
 	if _, err = defFile.WriteString(definitions); err != nil {
-		c.Fatalf("Cannot write %s to file %s: %v", definitions, defFile.Name(), err)
+		t.Fatalf("Cannot write %s to file %s: %v", definitions, defFile.Name(), err)
 	}
 	// write service temp method content.
 	servicePath := filepath.Join(path, "testservice")
 	if err := os.Mkdir(servicePath, 0755); err != nil {
-		c.Fatalf("Cannot create %s directory: %v", servicePath, err)
+		t.Fatalf("Cannot create %s directory: %v", servicePath, err)
 	}
 	methodFile, err := os.OpenFile(
 		filepath.Join(servicePath, "testmethod.json"), os.O_RDWR|os.O_CREATE, 0755)
 	if err != nil {
-		c.Fatalf("Cannot open %s file: %v", methodFile.Name(), err)
+		t.Fatalf("Cannot open %s file: %v", methodFile.Name(), err)
 	}
 	defer methodFile.Close()
 	if _, err = methodFile.WriteString(method); err != nil {
-		c.Fatalf("Cannot write %s to file %s: %v", method, methodFile.Name(), err)
+		t.Fatalf("Cannot write %s to file %s: %v", method, methodFile.Name(), err)
 	}
 	return
+}
+
+type expDir struct {
+	path  string
+	pkg   string
+	funcs []string
+}
+
+func testDirs(t *testing.T, exp []expDir, merge bool) {
+	in := []string{
+		"schema/gh.com/user/proj/schema/definitions.json",
+		"schema/gh.com/user/proj/schema/subdir/this.json",
+		"schema/gh.com/user/proj/schema/subdir2/next.json",
+		"schema/gh.com/user/proj/other/jsons/definitions.json",
+		"schema/gh.com/user/proj/other/jsons/sub/file.son",
+		"schema/gh.com/user/proj/other/jsons/sub2/n.json",
+		"schema/gh.com/other/schema/definitions.json",
+		"schema/gh.com/other/schema/service/next.json",
+		"schema/gh.com/user/proj/schema/next_sch/definitions.json",
+		"schema/gh.com/user/proj/schema/next_sch/js.json",
+		"schema/bitbucket.org/user/proj/definitions.json",
+		"schema/bitbucket.org/user/proj/sub/next.json",
+	}
+	out := []string{
+		"src/gh.com/user/proj/schema/source_test.go",
+		"src/gh.com/user/proj/schema/subdirnext/file.go",
+		"src/gh.com/user/proj/schema/next_sch/s.go",
+		"src/gh.com/user/proj/other/jsons/file.go",
+		"src/gh.com/user/proj/other/direct/f.go",
+		"src/bitbucket.org/user/proj/subdir/so.go",
+	}
+
+	tdir, err := ioutil.TempDir(os.TempDir(), "")
+	if err != nil {
+		t.Fatalf("want err=nil; got %q", err)
+	}
+
+	defer os.RemoveAll(tdir)
+	// Dump in and out to filesystem.
+	for _, p := range append(in, out...) {
+		f := filepath.Join(tdir, filepath.FromSlash(p))
+		err := os.MkdirAll(filepath.Dir(f), 0775)
+		if err != nil {
+			t.Fatalf("want err=nil; got %q", err)
+		}
+		var file *os.File
+		file, err = os.Create(f)
+		if err != nil {
+			t.Fatalf("want err=nil; got %q", err)
+		}
+		if filepath.Base(f) == definitionsFile {
+			_, err = file.WriteString(fmt.Sprintf(defJSONTest, idDefinition))
+			if err != nil {
+				t.Fatalf("want err=nil; got %q", err)
+			}
+		} else {
+			_, err = file.WriteString(fmt.Sprintf(JSONTest, ""))
+			if err != nil {
+				t.Fatalf("want err=nil; got %q", err)
+			}
+		}
+		if err = file.Close(); err != nil {
+			t.Fatalf("want err=nil; got %q", err)
+		}
+	}
+
+	os.Setenv("GOPATH", tdir)
+	err = Glob(merge)
+	if err != nil {
+		t.Fatalf("want err=nil; got %q", err)
+	}
+	// Gather current state of filesystem for used directory.
+	var files []string
+	err = filepath.Walk(filepath.Join(tdir, "src"), func(path string, info os.FileInfo, err error) error {
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("want err=nil; got %q", err)
+	}
+
+	// Check if current directory structure is equal to expected.
+	if len(files) != len(exp) {
+		t.Fatalf("want len(files)=len(exp); got %d!=%d", len(files), len(exp))
+	}
+	for _, exp := range exp {
+		g := filepath.Join(tdir, exp.path)
+		inf, err := os.Stat(g)
+		if err != nil {
+			t.Fatalf("want err=nil; got %q", err)
+		}
+		if inf.IsDir() {
+			t.Fatalf("want %q to be file", exp.path)
+		}
+		if exp.pkg != "" || exp.funcs != nil {
+			cnt, err := ioutil.ReadFile(g)
+			if err != nil {
+				t.Fatalf("want err=nil; got %q", err)
+			}
+			if exp.pkg != "" && !strings.Contains(string(cnt), fmt.Sprintf("package %v", exp.pkg)) {
+				t.Errorf("want content (%s) to contain \"%s\"", string(cnt), fmt.Sprintf("package %v", exp.pkg))
+			}
+			for _, f := range exp.funcs {
+				if !strings.Contains(string(cnt), fmt.Sprintf(": %s,", f)) {
+					t.Errorf("want content (%s) to contain \"%s\"", string(cnt), fmt.Sprintf(": %s", f))
+				}
+			}
+		}
+	}
+}
+
+func TestGlobMerge(t *testing.T) {
+	exp := []expDir{
+		{"src/gh.com/user/proj/schema/source_test.go", "", nil},
+		{"src/gh.com/user/proj/schema/subdirnext/file.go", "", nil},
+		{"src/gh.com/user/proj/schema/schema.go", "schema", []string{"this", "next"}},
+		{"src/gh.com/user/proj/schema/bind.go", "schema", nil},
+		{"src/gh.com/user/proj/schema/next_sch/s.go", "", nil},
+		{"src/gh.com/user/proj/schema/next_sch/bind.go", "next_sch", nil},
+		{"src/gh.com/user/proj/schema/next_sch/schema.go", "next_sch", []string{"js"}},
+		{"src/gh.com/user/proj/other/jsons/file.go", "", nil},
+		{"src/gh.com/user/proj/other/jsons/schema.go", "jsons", []string{"n"}},
+		{"src/gh.com/user/proj/other/jsons/bind.go", "jsons", nil},
+		{"src/gh.com/user/proj/other/direct/f.go", "", nil},
+		{"src/bitbucket.org/user/proj/subdir/so.go", "", nil},
+		{"src/bitbucket.org/user/proj/bind.go", "", nil},
+		{"src/bitbucket.org/user/proj/schema.go", "proj", []string{"next"}},
+	}
+	testDirs(t, exp, true)
+}
+
+func TestGlobNoMerge(t *testing.T) {
+	exp := []expDir{
+		{"src/gh.com/user/proj/schema/source_test.go", "", nil},
+		{"src/gh.com/user/proj/schema/subdirnext/file.go", "", nil},
+		{"src/gh.com/user/proj/schema/subdir/schema.go", "subdir", []string{"this"}},
+		{"src/gh.com/user/proj/schema/subdir/bind.go", "subdir", nil},
+		{"src/gh.com/user/proj/schema/subdir2/schema.go", "subdir2", []string{"next"}},
+		{"src/gh.com/user/proj/schema/subdir2/bind.go", "subdir2", nil},
+		{"src/gh.com/user/proj/schema/next_sch/s.go", "", nil},
+		{"src/gh.com/user/proj/schema/next_sch/bind.go", "next_sch", nil},
+		{"src/gh.com/user/proj/schema/next_sch/schema.go", "next_sch", []string{"js"}},
+		{"src/gh.com/user/proj/other/jsons/file.go", "", nil},
+		{"src/gh.com/user/proj/other/jsons/sub2/schema.go", "sub2", []string{"n"}},
+		{"src/gh.com/user/proj/other/jsons/sub2/bind.go", "sub2", nil},
+		{"src/gh.com/user/proj/other/direct/f.go", "", nil},
+		{"src/bitbucket.org/user/proj/subdir/so.go", "", nil},
+		{"src/bitbucket.org/user/proj/sub/bind.go", "", nil},
+		{"src/bitbucket.org/user/proj/sub/schema.go", "sub", []string{"next"}},
+	}
+	testDirs(t, exp, false)
 }
