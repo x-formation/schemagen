@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/rjeczalik/bindata"
-	"github.com/rjeczalik/tools/fs/glob"
+	"github.com/rjeczalik/tools/fs/fsutil"
 )
 
 type schg struct {
@@ -347,7 +347,7 @@ type path struct{ in, out string }
 // globGopath runs glob.Default.Intersect for provided gopath and returns
 // slice of path data structure.
 func globGopath(gopath string) (paths []path) {
-	inter := glob.Intersect(filepath.Join(gopath, "src"),
+	inter := fsutil.Intersect(filepath.Join(gopath, "src"),
 		filepath.Join(gopath, "schema"))
 	for i := range inter {
 		paths = append(paths, path{filepath.Join(gopath, "schema", inter[i]),
