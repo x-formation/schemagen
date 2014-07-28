@@ -1,4 +1,4 @@
-## schemagen [![GoDoc](https://godoc.org/github.com/x-formation/schemagen?status.png)](https://godoc.org/github.com/x-formation/schemagen) [![Build Status](https://travis-ci.org/x-formation/schemagen.png?branch=master)](https://travis-ci.org/x-formation/schemagen)
+## schemagen [![GoDoc](https://godoc.org/github.com/x-formation/schemagen?status.png)](https://godoc.org/github.com/x-formation/schemagen) [![Build Status](https://travis-ci.org/x-formation/schemagen.png?branch=master)](https://travis-ci.org/x-formation/schemagen)[![Build status](https://ci.appveyor.com/api/projects/status/y0tqhihbq4epjrtj)](https://ci.appveyor.com/project/rjeczalik/schemagen)
 
 Combines JSON Schema models read from a directory tree into one `.go` file.
 
@@ -18,7 +18,6 @@ Combines JSON Schema models read from a directory tree into one `.go` file.
 
 ```
 ~ $ go get -u github.com/x-formation/schemagen/cmd/goschemagen
-~ $ go install github.com/x-formation/schemagen/cmd/goschemagen
 ```
 
 *Documentation*
