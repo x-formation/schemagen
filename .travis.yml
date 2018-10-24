@@ -8,7 +8,7 @@ install:
  - export GOBIN=${HOME}/bin
  - go get code.google.com/p/go.tools/cmd/vet
  - go get -t -v ./...
- - go get github.com/golang/lint/golint
+ - go get golang.org/x/lint/golint
  - go install -a -race std
 
 script:
